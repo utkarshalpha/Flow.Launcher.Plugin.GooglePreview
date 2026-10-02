@@ -1,0 +1,59 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "plugin.json"
+      - "**.cs"
+      - "*.csproj"
+      - "*.png"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Read version
+        shell: pwsh
+        run: |
+          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).Version
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Skip if this version is already released
+        id: check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v$env:VERSION" *> $null
+          "exists=$($LASTEXITCODE -eq 0)".ToLower() >> $env:GITHUB_OUTPUT
+          exit 0
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: dotnet publish -c Release -o out
+
+      - name: Package
+        if: steps.check.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          Get-ChildItem out -Recurse -Include *.pdb, *.xml | Remove-Item
+          Compress-Archive -Path out/* -DestinationPath Flow.Launcher.Plugin.GooglePreview.zip
+
+      - name: Release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          files: Flow.Launcher.Plugin.GooglePreview.zip

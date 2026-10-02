@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Flow.Launcher.Plugin.GooglePreview</AssemblyName>
+    <RootNamespace>Flow.Launcher.Plugin.GooglePreview</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Flow supplies this at runtime, so it isn't shipped with the plugin -->
+    <PackageReference Include="Flow.Launcher.Plugin" Version="5.1.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="google-g.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="chatgpt.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
