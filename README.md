@@ -1,4 +1,6 @@
 # Google Preview for Flow Launcher
+<img width="1535" height="863" alt="image" src="https://github.com/user-attachments/assets/ff6165df-7549-42ab-825d-c5c460f4f55e" />
+
 
 Google suggestions in [Flow Launcher](https://www.flowlauncher.com), with the real Google results page shown right in the preview panel.
 
