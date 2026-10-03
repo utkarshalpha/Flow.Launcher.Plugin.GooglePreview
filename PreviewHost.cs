@@ -116,9 +116,8 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private static string _scriptId;
         private static int _scriptTextSize;
 
-        // When the user last moved the selection vs. last typed, to tell a pick from auto-selection
-        private static long _lastPick;
-        private static long _lastTyping;
+        // The result whose preview is on screen; → loads it
+        private static PreviewHost _shownHost;
         private static bool _inputHooked;
         private static readonly DispatcherTimer LoadTimer = new();
         private static PreviewHost _waitingHost;
@@ -136,15 +135,14 @@ namespace Flow.Launcher.Plugin.GooglePreview
             HookInput();
             GetRoot();
 
+            _shownHost = this;
             // Flow re-shows the same result (e.g. when other plugins' results arrive); keep it as is
             if (ReferenceEquals(_root.Parent, this) && _currentSearchUrl == _url) return;
 
             if (Settings.PreviewOnSelect)
             {
-                if (_lastPick > _lastTyping)
-                    ScheduleLoad(this, 150); // short pause so holding ↓ doesn't load every row
-                else
-                    ShowHint();
+                // Typing and ↓ / ↑ never load anything; → (or clicking the hint) does
+                ShowHint();
             }
             else
             {
@@ -201,24 +199,17 @@ namespace Flow.Launcher.Plugin.GooglePreview
             if (_inputHooked) return;
             _inputHooked = true;
             LoadTimer.Tick += OnLoadTimer;
-            // Flow's window is in this process, so class handlers see its keys and clicks
+            // Flow's window is in this process, so a class handler sees its keys.
+            // → loads the selected result's preview (still moves the caret as usual)
             EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler((_, e) =>
             {
-                switch (e.Key)
-                {
-                    case Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Tab:
-                        _lastPick = Environment.TickCount64;
-                        break;
-                    case Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
-                        or Key.LWin or Key.RWin or Key.Left or Key.Right or Key.Escape or Key.Enter or Key.F1 or Key.System:
-                        break;
-                    default:
-                        _lastTyping = Environment.TickCount64;
-                        break;
-                }
+                if (e.Key != Key.Right || Keyboard.Modifiers != ModifierKeys.None) return;
+                var host = _shownHost;
+                if (host == null || !host.IsLoaded) return;
+                if (ReferenceEquals(_root?.Parent, host) && _currentSearchUrl == host._url) return;
+                LoadTimer.Stop();
+                host.Load();
             }), true);
-            EventManager.RegisterClassHandler(typeof(Window), Mouse.PreviewMouseDownEvent,
-                new MouseButtonEventHandler((_, _) => _lastPick = Environment.TickCount64), true);
         }
 
         private static DockPanel GetRoot()

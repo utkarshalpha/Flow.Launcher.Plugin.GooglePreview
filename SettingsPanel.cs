@@ -29,7 +29,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             // When the preview loads
             AddHeading(panel, "Load the preview");
-            var onSelect = AddRadio(panel, "When I pick a result (↓ / ↑ or click). Recommended: half-typed text is never searched",
+            var onSelect = AddRadio(panel, "When I press → on a result (↓ / ↑ just move). Recommended: half-typed text is never searched",
                 settings.PreviewOnSelect, () => settings.PreviewOnSelect = true);
             var afterPause = AddRadio(panel, "Automatically when I stop typing", !settings.PreviewOnSelect,
                 () => settings.PreviewOnSelect = false);
@@ -41,7 +41,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
             var hintText = new TextBox { Text = settings.HintText, Width = 260, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(52, 0, 0, 12) };
             hintText.LostFocus += (_, _) =>
             {
-                settings.HintText = string.IsNullOrWhiteSpace(hintText.Text) ? "Press ↓ to preview" : hintText.Text;
+                settings.HintText = string.IsNullOrWhiteSpace(hintText.Text) ? "Press → to preview" : hintText.Text;
                 _save();
             };
             panel.Children.Add(hintText);
