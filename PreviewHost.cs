@@ -201,18 +201,31 @@ namespace Flow.Launcher.Plugin.GooglePreview
             LoadTimer.Tick += OnLoadTimer;
             // Flow's window is in this process, so a class handler sees its keys before Flow does.
             // → at the end of the query loads the selected result's preview. Flow also uses →
-            // there to open the context menu, so the key is consumed when it loads a preview;
-            // once the preview is showing, → goes to Flow again.
+            // there to open the context menu, so on this plugin's results → is always consumed
+            // (Flow's menu is still on Shift+Enter / Ctrl+O).
             EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler((_, e) =>
             {
+                if (_web != null && _web.IsKeyboardFocusWithin)
+                {
+                    // Typing inside the page (e.g. ChatGPT's box). Flow binds Enter / Shift+Enter on its
+                    // whole window, which would swallow them, so keep them from Flow and replay them
+                    // to the page as real key presses: Enter sends, Shift+Enter adds a line
+                    if (e.Key == Key.Enter && _web.CoreWebView2 != null)
+                    {
+                        e.Handled = true;
+                        SendEnterToPage(_web.CoreWebView2, Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+                    }
+                    return;
+                }
+
                 if (e.Key != Key.Right || Keyboard.Modifiers != ModifierKeys.None) return;
                 if (Keyboard.FocusedElement is TextBox box && box.CaretIndex < box.Text.Length) return; // editing the query
                 var host = _shownHost;
                 if (host == null || !host.IsLoaded) return;
-                if (ReferenceEquals(_root?.Parent, host) && _currentSearchUrl == host._url) return;
+                e.Handled = true;
+                if (ReferenceEquals(_root?.Parent, host) && _currentSearchUrl == host._url) return; // already showing
                 LoadTimer.Stop();
                 host.Load();
-                e.Handled = true;
             }), true);
         }
 
@@ -328,6 +341,23 @@ namespace Flow.Launcher.Plugin.GooglePreview
             {
                 core.Navigate(_pendingUrl);
                 _pendingUrl = null;
+            }
+        }
+
+        // DevTools protocol input events reach the page as trusted key presses, unlike script-made events
+        private static async void SendEnterToPage(CoreWebView2 core, bool shift)
+        {
+            var modifiers = shift ? 8 : 0;
+            const string key = "\"key\":\"Enter\",\"code\":\"Enter\",\"windowsVirtualKeyCode\":13,\"nativeVirtualKeyCode\":13";
+            try
+            {
+                await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", $"{{\"type\":\"rawKeyDown\",{key},\"modifiers\":{modifiers}}}");
+                await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", $"{{\"type\":\"char\",\"text\":\"\\r\",{key},\"modifiers\":{modifiers}}}");
+                await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", $"{{\"type\":\"keyUp\",{key},\"modifiers\":{modifiers}}}");
+            }
+            catch
+            {
+                // Page navigated away mid-press; nothing to do
             }
         }
 
