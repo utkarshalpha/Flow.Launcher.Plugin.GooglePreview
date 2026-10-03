@@ -199,16 +199,20 @@ namespace Flow.Launcher.Plugin.GooglePreview
             if (_inputHooked) return;
             _inputHooked = true;
             LoadTimer.Tick += OnLoadTimer;
-            // Flow's window is in this process, so a class handler sees its keys.
-            // → loads the selected result's preview (still moves the caret as usual)
+            // Flow's window is in this process, so a class handler sees its keys before Flow does.
+            // → at the end of the query loads the selected result's preview. Flow also uses →
+            // there to open the context menu, so the key is consumed when it loads a preview;
+            // once the preview is showing, → goes to Flow again.
             EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler((_, e) =>
             {
                 if (e.Key != Key.Right || Keyboard.Modifiers != ModifierKeys.None) return;
+                if (Keyboard.FocusedElement is TextBox box && box.CaretIndex < box.Text.Length) return; // editing the query
                 var host = _shownHost;
                 if (host == null || !host.IsLoaded) return;
                 if (ReferenceEquals(_root?.Parent, host) && _currentSearchUrl == host._url) return;
                 LoadTimer.Stop();
                 host.Load();
+                e.Handled = true;
             }), true);
         }
 
