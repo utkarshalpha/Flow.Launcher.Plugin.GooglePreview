@@ -22,6 +22,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private Settings _settings;
         private string _icon;
         private string _chatGptIcon;
+        private string _lastQuery;
 
         public Task InitAsync(PluginInitContext context)
         {
@@ -33,8 +34,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "FlowLauncher", "GooglePreviewWebView2");
             PreviewHost.OpenExternal = url => _context.API.OpenUrl(url);
-            PreviewHost.Settings = _settings;
-            return Task.CompletedTask;
+            PreviewHost.Settings = _settings;            return Task.CompletedTask;
         }
 
         public Control CreateSettingPanel() =>
@@ -43,6 +43,12 @@ namespace Flow.Launcher.Plugin.GooglePreview
         public async Task<List<Result>> QueryAsync(Query query, CancellationToken token)
         {
             var text = query.Search?.Trim();
+            // A new search needs → again before previews load
+            if (text != _lastQuery)
+            {
+                _lastQuery = text;
+                PreviewHost.Disarm();
+            }
             if (string.IsNullOrEmpty(text))
                 return new List<Result>();
 

@@ -33,7 +33,10 @@ namespace Flow.Launcher.Plugin.GooglePreview
     + '[aria-label*=""voice"" i],[aria-label=""Microphone"" i],#sfcnt,'
     + '[aria-label=""Upload image"" i],[aria-label*=""camera or photos"" i],[aria-label*=""Google Lens"" i],'
     + '[aria-label=""Open sidebar""],[aria-label=""Start dictation""],[aria-label=""Add files and more""],[aria-label=""Share""]'
-    + '{display:none !important}';
+    + '{display:none !important}'
+    // Flow's own font so the preview reads like part of the launcher (icon fonts left alone)
+    + 'body,body *:not(svg):not([class*=""icon"" i]):not([class*=""material"" i])'
+    + '{font-family:""Segoe UI Variable Text"",""Segoe UI"",system-ui,sans-serif !important}';
   const style = document.createElement('style');
   style.textContent = base + 'html{visibility:hidden !important}';
   // At document creation <html> may not exist yet; attach as soon as it does
@@ -114,12 +117,19 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private static string _pendingUrl;
         private static string _currentSearchUrl;
         private static string _scriptId;
+        private static string _desktopUserAgent;
         private static int _scriptTextSize;
 
         // The result whose preview is on screen; → loads it
         private static PreviewHost _shownHost;
+        // After the first → for a search, moving with ↓ / ↑ loads previews on its own; typing resets it
+        private static bool _armed;
+
+        public static void Disarm() => _armed = false;
         private static bool _inputHooked;
-        private static readonly DispatcherTimer LoadTimer = new();
+        // Created in HookInput on Flow's UI thread: Flow starts plugins on a background thread,
+        // and a timer made there never ticks
+        private static DispatcherTimer LoadTimer;
         private static PreviewHost _waitingHost;
 
         private readonly string _url;
@@ -141,8 +151,11 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             if (Settings.PreviewOnSelect)
             {
-                // Typing and ↓ / ↑ never load anything; → (or clicking the hint) does
-                ShowHint();
+                // Until → is pressed for this search nothing loads; after that ↓ / ↑ load as you move
+                if (_armed)
+                    ScheduleLoad(this, 150); // short pause so holding ↓ doesn't load every row
+                else
+                    ShowHint();
             }
             else
             {
@@ -164,7 +177,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
             };
             // Clicking the hint loads this result right away
             var area = new Border { Background = Brushes.Transparent, Child = text, Cursor = Cursors.Hand };
-            area.MouseLeftButtonUp += (_, _) => Load();
+            area.MouseLeftButtonUp += (_, _) => { _armed = true; Load(); };
             Content = area;
         }
 
@@ -198,6 +211,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
         {
             if (_inputHooked) return;
             _inputHooked = true;
+            LoadTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher.CurrentDispatcher);
             LoadTimer.Tick += OnLoadTimer;
             // Flow's window is in this process, so a class handler sees its keys before Flow does.
             // → at the end of the query loads the selected result's preview. Flow also uses →
@@ -223,6 +237,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 var host = _shownHost;
                 if (host == null || !host.IsLoaded) return;
                 e.Handled = true;
+                _armed = true;
                 if (ReferenceEquals(_root?.Parent, host) && _currentSearchUrl == host._url) return; // already showing
                 LoadTimer.Stop();
                 host.Load();
@@ -235,7 +250,6 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             _web = new WebView2 { DefaultBackgroundColor = System.Drawing.Color.White };
             _web.CoreWebView2InitializationCompleted += OnInitCompleted;
-
             // WebView2 is a native window, so WPF can't draw over it; the back
             // control is a slim bar above it
             var back = new Button
@@ -273,6 +287,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 _web.Visibility = Visibility.Hidden;
                 await ApplyTextSizeAsync(_web.CoreWebView2);
                 if (_currentSearchUrl != url) return; // a newer pick arrived meanwhile
+                SetUserAgentFor(_web.CoreWebView2, url);
                 _web.CoreWebView2.Navigate(url);
                 return;
             }
@@ -298,7 +313,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
             if (!e.IsSuccess) return;
 
             var core = _web.CoreWebView2;
-            core.Settings.UserAgent = MobileUserAgent;
+            _desktopUserAgent = core.Settings.UserAgent;
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
@@ -339,10 +354,16 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             if (_pendingUrl != null)
             {
+                SetUserAgentFor(core, _pendingUrl);
                 core.Navigate(_pendingUrl);
                 _pendingUrl = null;
             }
         }
+
+        // Google gets the phone layout so it fits the panel. ChatGPT gets the normal desktop
+        // identity: as a "phone" it treats Enter as a new line instead of send.
+        private static void SetUserAgentFor(CoreWebView2 core, string url) =>
+            core.Settings.UserAgent = IsChatGpt(url) ? _desktopUserAgent : MobileUserAgent;
 
         // DevTools protocol input events reach the page as trusted key presses, unlike script-made events
         private static async void SendEnterToPage(CoreWebView2 core, bool shift)

@@ -29,28 +29,35 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             // When the preview loads
             AddHeading(panel, "Load the preview");
-            var onSelect = AddRadio(panel, "When I press → on a result (↓ / ↑ just move). Recommended: half-typed text is never searched",
-                settings.PreviewOnSelect, () => settings.PreviewOnSelect = true);
-            var afterPause = AddRadio(panel, "Automatically when I stop typing", !settings.PreviewOnSelect,
-                () => settings.PreviewOnSelect = false);
-            var delay = AddCombo(panel, "Wait after typing (ms)", new object[] { 500, 750, 1000, 1500, 2000, 3000 },
-                settings.PreviewDelayMs, v => settings.PreviewDelayMs = (int)v);
-            BindEnabled(afterPause, delay);
-
-            var hint = AddCheckBox(panel, "Show a hint while waiting for a pick", settings.ShowHint, v => settings.ShowHint = v, indent: true);
-            var hintText = new TextBox { Text = settings.HintText, Width = 260, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(52, 0, 0, 12) };
-            hintText.LostFocus += (_, _) =>
+            // Option 1: press → (each option's details sit directly under it)
+            var onSelect = AddRadio(panel, "When I press → (recommended)", settings.PreviewOnSelect, () => settings.PreviewOnSelect = true);
+            AddNote(panel, "Press → once after typing; then ↓ / ↑ load previews as you move. Half-typed text is never searched.");
+            var hint = AddCheckBox(panel, "Show a hint until I press →", settings.ShowHint, v => settings.ShowHint = v, indent: true);
+            var hintText = new TextBox { Text = settings.HintText, Width = 260, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(52, 0, 0, 14) };
+            hintText.TextChanged += (_, _) =>
             {
                 settings.HintText = string.IsNullOrWhiteSpace(hintText.Text) ? "Press → to preview" : hintText.Text;
                 _save();
             };
             panel.Children.Add(hintText);
-            hint.IsEnabled = settings.PreviewOnSelect;
-            hintText.IsEnabled = settings.PreviewOnSelect && settings.ShowHint;
-            hint.Checked += (_, _) => hintText.IsEnabled = true;
-            hint.Unchecked += (_, _) => hintText.IsEnabled = false;
-            onSelect.Checked += (_, _) => { hint.IsEnabled = true; hintText.IsEnabled = hint.IsChecked == true; };
-            onSelect.Unchecked += (_, _) => hint.IsEnabled = hintText.IsEnabled = false;
+
+            // Option 2: after a pause
+            var afterPause = AddRadio(panel, "Automatically when I stop typing", !settings.PreviewOnSelect, () => settings.PreviewOnSelect = false);
+            var delay = AddCombo(panel, "Wait after typing (ms)", new object[] { 500, 750, 1000, 1500, 2000, 3000 },
+                settings.PreviewDelayMs, v => settings.PreviewDelayMs = (int)v);
+
+            void SyncLoadOptions()
+            {
+                var pressMode = onSelect.IsChecked == true;
+                hint.IsEnabled = pressMode;
+                hintText.IsEnabled = pressMode && hint.IsChecked == true;
+                delay.IsEnabled = !pressMode;
+            }
+            SyncLoadOptions();
+            onSelect.Checked += (_, _) => SyncLoadOptions();
+            afterPause.Checked += (_, _) => SyncLoadOptions();
+            hint.Checked += (_, _) => SyncLoadOptions();
+            hint.Unchecked += (_, _) => SyncLoadOptions();
 
             // Text size
             AddCombo(panel, "Preview text size (%)", new object[] { 70, 80, 90, 100, 110, 120, 130 },
@@ -63,6 +70,9 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
             Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         }
+
+        private static void AddNote(Panel panel, string text) =>
+            panel.Children.Add(new TextBlock { Text = text, Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(26, -4, 0, 10) });
 
         private static void AddHeading(Panel panel, string text) =>
             panel.Children.Add(new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 8, 0, 8) });
