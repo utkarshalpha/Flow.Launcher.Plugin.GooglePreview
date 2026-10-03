@@ -10,9 +10,8 @@ using System.Windows.Controls;
 
 namespace Flow.Launcher.Plugin.GooglePreview
 {
-    public class Main : IAsyncPlugin
+    public class Main : IAsyncPlugin, ISettingProvider
     {
-        private const int MaxSuggestions = 5;
         // Below a real app-name match (Flow scores those ~100+), above weak matches:
         // typed text first, ChatGPT second, then suggestions
         private const int BaseScore = 90;
@@ -20,20 +19,26 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
 
         private PluginInitContext _context;
+        private Settings _settings;
         private string _icon;
         private string _chatGptIcon;
 
         public Task InitAsync(PluginInitContext context)
         {
             _context = context;
+            _settings = context.API.LoadSettingJsonStorage<Settings>();
             _icon = Path.Combine(context.CurrentPluginMetadata.PluginDirectory, "google-g.png");
             _chatGptIcon = Path.Combine(context.CurrentPluginMetadata.PluginDirectory, "chatgpt.png");
             PreviewHost.UserDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "FlowLauncher", "GooglePreviewWebView2");
             PreviewHost.OpenExternal = url => _context.API.OpenUrl(url);
+            PreviewHost.AllowLocation = () => _settings.AllowLocation;
             return Task.CompletedTask;
         }
+
+        public Control CreateSettingPanel() =>
+            new SettingsPanel(_settings, () => _context.API.SaveSettingJsonStorage<Settings>());
 
         public async Task<List<Result>> QueryAsync(Query query, CancellationToken token)
         {
@@ -41,29 +46,34 @@ namespace Flow.Launcher.Plugin.GooglePreview
             if (string.IsNullOrEmpty(text))
                 return new List<Result>();
 
-            // Wait for typing to pause before hitting the network
-            await Task.Delay(120, token);
-
             var terms = new List<string> { text };
-            try
+            if (_settings.ShowSuggestions)
             {
-                foreach (var s in await FetchSuggestionsAsync(text, token))
+                // Wait for typing to pause before hitting the network
+                await Task.Delay(120, token);
+                var max = Math.Clamp(_settings.SuggestionCount, 1, 5);
+                try
                 {
-                    if (terms.Count > MaxSuggestions) break;
-                    if (!terms.Exists(t => string.Equals(t, s, StringComparison.OrdinalIgnoreCase)))
-                        terms.Add(s);
+                    foreach (var s in await FetchSuggestionsAsync(text, token))
+                    {
+                        if (terms.Count > max) break;
+                        if (!terms.Exists(t => string.Equals(t, s, StringComparison.OrdinalIgnoreCase)))
+                            terms.Add(s);
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // Offline or blocked: still offer the plain search
                 }
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                // Offline or blocked: still offer the plain search
-            }
 
-            var results = new List<Result> { MakeResult(terms[0], BaseScore), MakeChatGptResult(text, BaseScore - 1) };
+            var results = new List<Result> { MakeResult(terms[0], BaseScore) };
+            if (_settings.ShowChatGpt)
+                results.Add(MakeChatGptResult(text, BaseScore - 1));
             for (var i = 1; i < terms.Count; i++)
                 results.Add(MakeResult(terms[i], BaseScore - 1 - i));
             return results;
@@ -83,6 +93,8 @@ namespace Flow.Launcher.Plugin.GooglePreview
                     _context.API.OpenUrl(url);
                     return true;
                 },
+                // Works logged out; the answer appears right in the preview
+                PreviewPanel = new Lazy<UserControl>(() => new PreviewHost(url)),
             };
         }
 

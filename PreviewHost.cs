@@ -24,9 +24,12 @@ namespace Flow.Launcher.Plugin.GooglePreview
   // Google's 16px body / ~19px titles * .75 ~ 12px / 14px, matching the result list
   // Voice input needs a speech service WebView2 doesn't have, so hide the mic buttons;
   // the top search bar and Lens buttons are unwanted too (tabs stay)
+  // On ChatGPT only the answer and the reply box stay (no sidebar, dictation, uploads, share)
   const base = 'html{zoom:.75 !important}html,body{overflow-y:auto !important}'
     + '[aria-label*=""voice"" i],[aria-label=""Microphone"" i],#sfcnt,'
-    + '[aria-label=""Upload image"" i],[aria-label*=""camera or photos"" i],[aria-label*=""Google Lens"" i]{display:none !important}';
+    + '[aria-label=""Upload image"" i],[aria-label*=""camera or photos"" i],[aria-label*=""Google Lens"" i],'
+    + '[aria-label=""Open sidebar""],[aria-label=""Start dictation""],[aria-label=""Add files and more""],[aria-label=""Share""]'
+    + '{display:none !important}';
   const style = document.createElement('style');
   style.textContent = base + 'html{visibility:hidden !important}';
   // At document creation <html> may not exist yet; attach as soon as it does
@@ -80,10 +83,20 @@ namespace Flow.Launcher.Plugin.GooglePreview
   });
   // Never stay blank if Google's layout is unexpected
   setTimeout(reveal, 2500);
+
+  // ChatGPT draws its Log in buttons after it starts up and they have no label to target in CSS
+  if (location.hostname.endsWith('chatgpt.com')) {
+    const hideLogin = () => document.querySelectorAll('button, a').forEach(b => {
+      if (/^(Log in|Sign up for free|Sign up)$/.test(b.textContent.trim())) hide(b);
+    });
+    const timer = setInterval(hideLogin, 400);
+    setTimeout(() => clearInterval(timer), 15000);
+  }
 })();";
 
         public static string UserDataFolder;
         public static Action<string> OpenExternal;
+        public static Func<bool> AllowLocation = () => false;
 
         private static DockPanel _root;
         private static Border _backBar;
@@ -195,22 +208,28 @@ namespace Flow.Launcher.Plugin.GooglePreview
             };
             core.NavigationStarting += (_, args) =>
             {
-                // Google's own reloads (e.g. after updating location) stay in the preview
-                if (args.Uri == _currentSearchUrl || !args.IsUserInitiated || IsGoogleSearchPage(args.Uri)) return;
+                // Google's own reloads (e.g. after updating location) and ChatGPT stay in the preview
+                if (args.Uri == _currentSearchUrl || !args.IsUserInitiated || IsGoogleSearchPage(args.Uri) || IsChatGpt(args.Uri)) return;
                 args.Cancel = true;
                 OpenExternal?.Invoke(args.Uri);
             };
 
             core.DOMContentLoaded += (_, _) => _web.Visibility = Visibility.Visible;
             core.NavigationCompleted += (_, _) => _web.Visibility = Visibility.Visible;
-            // Location for "near me", microphone for voice search, camera for Lens
+
+            // Older versions saved an "allow" for these in the profile; clear it so
+            // the setting below is what decides
+            foreach (var kind in new[] { CoreWebView2PermissionKind.Geolocation, CoreWebView2PermissionKind.Microphone, CoreWebView2PermissionKind.Camera })
+                await core.Profile.SetPermissionStateAsync(kind, "https://www.google.com", CoreWebView2PermissionState.Default);
+
+            // Location only if the user turned it on; camera and mic are never used
             core.PermissionRequested += (_, args) =>
             {
-                if (args.PermissionKind is not (CoreWebView2PermissionKind.Geolocation
-                    or CoreWebView2PermissionKind.Microphone
-                    or CoreWebView2PermissionKind.Camera)) return;
-                args.State = CoreWebView2PermissionState.Allow;
-                args.SavesInProfile = true;
+                args.SavesInProfile = false;
+                if (args.PermissionKind == CoreWebView2PermissionKind.Geolocation)
+                    args.State = AllowLocation() ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+                else if (args.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera)
+                    args.State = CoreWebView2PermissionState.Deny;
             };
 
             if (_pendingUrl != null)
@@ -226,12 +245,17 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private static bool IsOffResults(string uri)
         {
             if (!Uri.TryCreate(uri, UriKind.Absolute, out var u)) return true;
+            // A ChatGPT answer is its own page; going back would land on an older search
+            if (IsChatGpt(uri)) return false;
             if (u.AbsolutePath != "/search" || u.Fragment.Length > 1) return true;
             var q = u.Query.ToLowerInvariant();
             foreach (var p in ViewParams)
                 if (q.Contains("&" + p) || q.Contains("?" + p)) return true;
             return false;
         }
+
+        private static bool IsChatGpt(string uri) =>
+            Uri.TryCreate(uri, UriKind.Absolute, out var u) && (u.Host == "chatgpt.com" || u.Host.EndsWith(".chatgpt.com"));
 
         private static bool IsGoogleSearchPage(string uri)
         {

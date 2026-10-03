@@ -6,7 +6,7 @@ Google suggestions in [Flow Launcher](https://www.flowlauncher.com), with the re
 
 - What you type and up to 5 Google suggestions, each with a live results preview
 - AI Overview, maps, places, shopping and the AI Mode / Images / Videos tabs inside the preview
-- An "Ask ChatGPT" row right after your search
+- An "Ask ChatGPT" row right after your search, with ChatGPT's answer shown in the preview (no login needed)
 - Compact view: Google's menu, sign-in, search bar, mic and Lens buttons are hidden
 - "← Back to results" steps back one page (for example out of AI Mode or an expanded map)
 - Enter opens the full search in your default browser; links clicked in the preview open there too
@@ -28,10 +28,20 @@ Requires Flow Launcher 2.0 or newer and the Microsoft Edge WebView2 Runtime (inc
 
 Press your Flow hotkey (default `Alt + Space`) and type. Arrow onto a Google result to see its results page in the preview (`F1` toggles the preview panel).
 
+## Settings
+
+Flow → Settings → Plugins → Google Preview:
+
+- **Show Google suggestions**, and how many (1 to 5)
+- **Show "Ask ChatGPT"**
+- **Allow location in the preview** for "near me" searches (off by default)
+
+Camera and microphone are always blocked.
+
 ## Notes
 
-- The preview is an embedded Edge WebView2 using Google's mobile layout. It keeps its own cookies and permissions in `%LOCALAPPDATA%\FlowLauncher\GooglePreviewWebView2`.
-- Location access is allowed so "near me" searches work.
+- The preview is an embedded Edge WebView2 using Google's mobile layout. It keeps its own cookies in `%LOCALAPPDATA%\FlowLauncher\GooglePreviewWebView2`.
+- Each time the ChatGPT row is previewed, the question is sent to ChatGPT (logged out), which counts toward its free usage.
 - Voice search is hidden because Google's voice input doesn't work inside WebView2.
 - If Google changes its page layout, some hidden parts may reappear until the plugin is updated.
 
