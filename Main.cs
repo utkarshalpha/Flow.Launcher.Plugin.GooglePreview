@@ -33,7 +33,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "FlowLauncher", "GooglePreviewWebView2");
             PreviewHost.OpenExternal = url => _context.API.OpenUrl(url);
-            PreviewHost.AllowLocation = () => _settings.AllowLocation;
+            PreviewHost.Settings = _settings;
             return Task.CompletedTask;
         }
 
@@ -94,7 +94,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
                     return true;
                 },
                 // Works logged out; the answer appears right in the preview
-                PreviewPanel = new Lazy<UserControl>(() => new PreviewHost(url)),
+                PreviewPanel = _settings.ChatGptPreview ? new Lazy<UserControl>(() => new PreviewHost(url)) : null,
             };
         }
 

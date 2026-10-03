@@ -33,7 +33,10 @@ Press your Flow hotkey (default `Alt + Space`) and type. Arrow onto a Google res
 Flow → Settings → Plugins → Google Preview:
 
 - **Show Google suggestions**, and how many (1 to 5)
-- **Show "Ask ChatGPT"**
+- **Show "Ask ChatGPT"**, and whether its answer shows in the preview (you can keep chatting there)
+- **Load the preview** when you pick a result with ↓ / ↑ or a click (default), or automatically after you stop typing, with a wait you choose. Loading on pick means half-typed text is never sent to Google or ChatGPT, which also avoids Google's "unusual traffic" check
+- **Hint** shown while waiting for a pick, on/off, with your own text
+- **Preview text size**: 100% matches Flow's result list
 - **Allow location in the preview** for "near me" searches (off by default)
 
 Camera and microphone are always blocked.

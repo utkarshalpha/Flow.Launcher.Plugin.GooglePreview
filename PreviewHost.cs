@@ -2,6 +2,9 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -21,11 +24,12 @@ namespace Flow.Launcher.Plugin.GooglePreview
         // tabs and results is hidden. Briefly watches the DOM so late header bits get hidden too.
         private const string ResultsOnlyScript = @"
 (() => {
-  // Google's 16px body / ~19px titles * .75 ~ 12px / 14px, matching the result list
+  // Zoom per site so text matches Flow's result list (filled in from the text size setting)
+  const zoom = location.hostname.endsWith('chatgpt.com') ? __CHATGPT_ZOOM__ : __GOOGLE_ZOOM__;
   // Voice input needs a speech service WebView2 doesn't have, so hide the mic buttons;
   // the top search bar and Lens buttons are unwanted too (tabs stay)
   // On ChatGPT only the answer and the reply box stay (no sidebar, dictation, uploads, share)
-  const base = 'html{zoom:.75 !important}html,body{overflow-y:auto !important}'
+  const base = 'html{zoom:' + zoom + ' !important}html,body{overflow-y:auto !important}'
     + '[aria-label*=""voice"" i],[aria-label=""Microphone"" i],#sfcnt,'
     + '[aria-label=""Upload image"" i],[aria-label*=""camera or photos"" i],[aria-label*=""Google Lens"" i],'
     + '[aria-label=""Open sidebar""],[aria-label=""Start dictation""],[aria-label=""Add files and more""],[aria-label=""Share""]'
@@ -94,9 +98,14 @@ namespace Flow.Launcher.Plugin.GooglePreview
   }
 })();";
 
+        // Text size at 100%: Google's 16px titles / 14px text -> 14 / 12, ChatGPT's 16px text -> 12,
+        // matching Flow's result list (measured on the live pages)
+        private const double GoogleZoom = 0.875;
+        private const double ChatGptZoom = 0.75;
+
         public static string UserDataFolder;
         public static Action<string> OpenExternal;
-        public static Func<bool> AllowLocation = () => false;
+        public static Settings Settings = new();
 
         private static DockPanel _root;
         private static Border _backBar;
@@ -104,6 +113,15 @@ namespace Flow.Launcher.Plugin.GooglePreview
         private static bool _initStarted;
         private static string _pendingUrl;
         private static string _currentSearchUrl;
+        private static string _scriptId;
+        private static int _scriptTextSize;
+
+        // When the user last moved the selection vs. last typed, to tell a pick from auto-selection
+        private static long _lastPick;
+        private static long _lastTyping;
+        private static bool _inputHooked;
+        private static readonly DispatcherTimer LoadTimer = new();
+        private static PreviewHost _waitingHost;
 
         private readonly string _url;
 
@@ -115,15 +133,92 @@ namespace Flow.Launcher.Plugin.GooglePreview
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            var root = GetRoot();
+            HookInput();
+            GetRoot();
 
+            // Flow re-shows the same result (e.g. when other plugins' results arrive); keep it as is
+            if (ReferenceEquals(_root.Parent, this) && _currentSearchUrl == _url) return;
+
+            if (Settings.PreviewOnSelect)
+            {
+                if (_lastPick > _lastTyping)
+                    ScheduleLoad(this, 150); // short pause so holding ↓ doesn't load every row
+                else
+                    ShowHint();
+            }
+            else
+            {
+                Content = null;
+                ScheduleLoad(this, Settings.PreviewDelayMs);
+            }
+        }
+
+        private void ShowHint()
+        {
+            var text = new TextBlock
+            {
+                Text = Settings.ShowHint ? Settings.HintText : "",
+                Opacity = 0.6,
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            // Clicking the hint loads this result right away
+            var area = new Border { Background = Brushes.Transparent, Child = text, Cursor = Cursors.Hand };
+            area.MouseLeftButtonUp += (_, _) => Load();
+            Content = area;
+        }
+
+        private static void ScheduleLoad(PreviewHost host, int delayMs)
+        {
+            _waitingHost = host;
+            LoadTimer.Stop();
+            LoadTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
+            LoadTimer.Start();
+        }
+
+        private static void OnLoadTimer(object sender, EventArgs e)
+        {
+            LoadTimer.Stop();
+            var host = _waitingHost;
+            _waitingHost = null;
+            if (host != null && host.IsLoaded) host.Load();
+        }
+
+        private void Load()
+        {
             // Move the shared browser into whichever host is on screen now
-            if (root.Parent is ContentControl oldHost && !ReferenceEquals(oldHost, this))
+            if (_root.Parent is ContentControl oldHost && !ReferenceEquals(oldHost, this))
                 oldHost.Content = null;
-            if (!ReferenceEquals(Content, root))
-                Content = root;
-
+            if (!ReferenceEquals(Content, _root))
+                Content = _root;
             Navigate(_url);
+        }
+
+        private static void HookInput()
+        {
+            if (_inputHooked) return;
+            _inputHooked = true;
+            LoadTimer.Tick += OnLoadTimer;
+            // Flow's window is in this process, so class handlers see its keys and clicks
+            EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent, new KeyEventHandler((_, e) =>
+            {
+                switch (e.Key)
+                {
+                    case Key.Up or Key.Down or Key.PageUp or Key.PageDown or Key.Tab:
+                        _lastPick = Environment.TickCount64;
+                        break;
+                    case Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+                        or Key.LWin or Key.RWin or Key.Left or Key.Right or Key.Escape or Key.Enter or Key.F1 or Key.System:
+                        break;
+                    default:
+                        _lastTyping = Environment.TickCount64;
+                        break;
+                }
+            }), true);
+            EventManager.RegisterClassHandler(typeof(Window), Mouse.PreviewMouseDownEvent,
+                new MouseButtonEventHandler((_, _) => _lastPick = Environment.TickCount64), true);
         }
 
         private static DockPanel GetRoot()
@@ -140,9 +235,9 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 Content = "← Back to results",
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Padding = new Thickness(8, 2, 8, 2),
-                Background = System.Windows.Media.Brushes.Transparent,
+                Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                Cursor = System.Windows.Input.Cursors.Hand,
+                Cursor = Cursors.Hand,
                 FontSize = 12,
             };
             // One step back, but never past this search's results into an older search
@@ -168,6 +263,8 @@ namespace Flow.Launcher.Plugin.GooglePreview
             {
                 // Hide the previous search until the new page is ready
                 _web.Visibility = Visibility.Hidden;
+                await ApplyTextSizeAsync(_web.CoreWebView2);
+                if (_currentSearchUrl != url) return; // a newer pick arrived meanwhile
                 _web.CoreWebView2.Navigate(url);
                 return;
             }
@@ -198,7 +295,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(ResultsOnlyScript);
+            await ApplyTextSizeAsync(core);
 
             // Links clicked in the preview open in the real browser
             core.NewWindowRequested += (_, args) =>
@@ -227,7 +324,7 @@ namespace Flow.Launcher.Plugin.GooglePreview
             {
                 args.SavesInProfile = false;
                 if (args.PermissionKind == CoreWebView2PermissionKind.Geolocation)
-                    args.State = AllowLocation() ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+                    args.State = Settings.AllowLocation ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
                 else if (args.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera)
                     args.State = CoreWebView2PermissionState.Deny;
             };
@@ -237,6 +334,20 @@ namespace Flow.Launcher.Plugin.GooglePreview
                 core.Navigate(_pendingUrl);
                 _pendingUrl = null;
             }
+        }
+
+        // The page script carries the zoom, so re-register it when the text size setting changes
+        private static async System.Threading.Tasks.Task ApplyTextSizeAsync(CoreWebView2 core)
+        {
+            var size = Math.Clamp(Settings.TextSizePercent, 50, 200);
+            if (_scriptId != null && _scriptTextSize == size) return;
+            if (_scriptId != null) core.RemoveScriptToExecuteOnDocumentCreated(_scriptId);
+            var scale = size / 100.0;
+            var script = ResultsOnlyScript
+                .Replace("__GOOGLE_ZOOM__", (GoogleZoom * scale).ToString("0.###", CultureInfo.InvariantCulture))
+                .Replace("__CHATGPT_ZOOM__", (ChatGptZoom * scale).ToString("0.###", CultureInfo.InvariantCulture));
+            _scriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(script);
+            _scriptTextSize = size;
         }
 
         // Google adds tracking params to the results URL, so only these mean "a different view"
